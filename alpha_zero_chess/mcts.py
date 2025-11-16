@@ -5,7 +5,7 @@ import chess
 import numpy as np
 
 from alpha_zero_chess.config import EXPLORATION_CONSTANT, NUM_SIMULATIONS
-from alpha_zero_chess.move_encoder import move_to_action, action_to_move, ALL_POSSIBLE_MOVES
+from alpha_zero_chess.move_encoder import move_to_action, action_to_move, NUM_MOVE_PLANES
 
 class MCTSNode:
     def __init__(
@@ -14,6 +14,7 @@ class MCTSNode:
         move: Optional[chess.Move] = None,
         parent: Optional["MCTSNode"] = None,
         prior: float = 0.0,
+        history: List[chess.Board] = None
     ):
         self.board = board.copy()
         self.move = move
@@ -22,6 +23,7 @@ class MCTSNode:
         self.visits = 0
         self.value = 0.0
         self.prior = prior
+        self.history = history if history is not None else [board.copy()]
 
     def is_fully_expanded(self) -> bool:
         return len(self.children) > 0
@@ -40,15 +42,20 @@ class MCTSNode:
     def select_best_child(self) -> "MCTSNode":
         return max(self.children, key=lambda child: child.ucb_value())
 
-    def expand(self, move_probs):
-        for action, prob in enumerate(move_probs):
-            if prob > 0:
-                move_uci = ALL_POSSIBLE_MOVES[action]
-                move = chess.Move.from_uci(move_uci)
-                if move in self.board.legal_moves:
-                    new_board = self.board.copy()
-                    new_board.push(move)
-                    self.children.append(MCTSNode(new_board, move, self, prob))
+    def expand(self, policy_planes):
+        legal_moves = list(self.board.legal_moves)
+        for move in legal_moves:
+            action = move_to_action(move)
+            if action:
+                plane_idx, from_sq = action
+                prob = policy_planes[plane_idx, from_sq // 8, from_sq % 8]
+
+                new_board = self.board.copy()
+                new_board.push(move)
+                new_history = self.history + [new_board.copy()]
+                if len(new_history) > 8:
+                    new_history.pop(0)
+                self.children.append(MCTSNode(new_board, move, self, prob, new_history))
 
     def backpropagate(self, result: float):
         self.visits += 1
@@ -62,8 +69,8 @@ class ChessMCTS:
         self.model = model
         self.root = MCTSNode(chess.Board())
 
-    def search(self, board: chess.Board):
-        self.root = MCTSNode(board)
+    def search(self, board: chess.Board, history: List[chess.Board]):
+        self.root = MCTSNode(board, history=history)
 
         for _ in range(NUM_SIMULATIONS):
             node = self.root
@@ -71,7 +78,7 @@ class ChessMCTS:
                 node = node.select_best_child()
 
             if not node.is_terminal():
-                policy, value = self.model.predict(node.board)
+                policy, value = self.model.predict(node.history)
                 node.expand(policy)
                 node.backpropagate(value)
             else:
@@ -84,8 +91,8 @@ class ChessMCTS:
                     value = -1.0
                 node.backpropagate(value)
 
-    def get_move_probabilities(self, board: chess.Board, temp=1.0):
-        self.search(board)
+    def get_move_probabilities(self, board: chess.Board, history: List[chess.Board], temp=1.0):
+        self.search(board, history)
 
         move_visits = [(child.move, child.visits) for child in self.root.children]
 
@@ -102,22 +109,29 @@ class ChessMCTS:
     def self_play(self):
         training_examples = []
         board = chess.Board()
+        history = [board.copy()]
 
         while not board.is_game_over():
-            moves, move_probs = self.get_move_probabilities(board)
+            moves, move_probs = self.get_move_probabilities(board, history)
 
             if not moves:
                 break
 
-            action_probs = np.zeros(len(ALL_POSSIBLE_MOVES))
+            policy_target = np.zeros((NUM_MOVE_PLANES, 8, 8))
             for move, prob in zip(moves, move_probs):
                 action = move_to_action(move)
-                action_probs[action] = prob
+                if action:
+                    plane_idx, from_sq = action
+                    policy_target[plane_idx, from_sq // 8, from_sq % 8] = prob
 
-            training_examples.append([board.copy(), action_probs, None])
+            training_examples.append([history, policy_target, None])
 
             move = np.random.choice(moves, p=move_probs)
             board.push(move)
+
+            history.append(board.copy())
+            if len(history) > 8:
+                history.pop(0)
 
         # Assign game outcome to the training examples
         outcome = board.outcome()
@@ -130,7 +144,7 @@ class ChessMCTS:
 
         for i in range(len(training_examples)):
             # The result is from the perspective of the current player at that state
-            if training_examples[i][0].turn == chess.WHITE:
+            if training_examples[i][0][-1].turn == chess.WHITE:
                 training_examples[i][2] = result
             else:
                 training_examples[i][2] = -result

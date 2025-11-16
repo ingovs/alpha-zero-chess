@@ -3,50 +3,65 @@ import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 import chess
+from typing import List
 
 from alpha_zero_chess.config import INPUT_SHAPE, NUM_RESIDUAL_BLOCKS, NUM_FILTERS
-from alpha_zero_chess.move_encoder import ALL_POSSIBLE_MOVES
+from alpha_zero_chess.move_encoder import NUM_MOVE_PLANES
 
-def board_to_input(board):
+def board_to_input(board_history: List[chess.Board]):
     """
-    Converts a chess.Board object to a numpy array suitable for the neural network.
-    The input shape is (18, 8, 8).
+    Converts a history of chess.Board objects to a numpy array suitable for the neural network,
+    based on the AlphaZero paper's 119-plane input representation.
     """
     input_board = np.zeros(INPUT_SHAPE, dtype=np.float32)
 
-    # Piece positions
-    for piece_type in chess.PIECE_TYPES:
-        for square in board.pieces(piece_type, board.turn):
-            idx = piece_type - 1
-            input_board[idx, square // 8, square % 8] = 1
-        for square in board.pieces(piece_type, not board.turn):
-            idx = piece_type - 1 + 6
-            input_board[idx, square // 8, square % 8] = 1
+    # --- History Features (112 planes) ---
+    for i, board in enumerate(board_history):
+        # Player 1 is the current player for that historical board state
+        p1_color = board.turn
+        p2_color = not p1_color
 
-    # Repetition counters
-    if board.is_repetition(2):
-        input_board[12, :, :] = 1
-    if board.is_repetition(3):
-        input_board[13, :, :] = 1
+        # P1 and P2 piece positions (12 planes per history step)
+        for piece_type in chess.PIECE_TYPES:
+            # P1 pieces (6 planes)
+            for square in board.pieces(piece_type, p1_color):
+                plane_idx = i * 14 + (piece_type - 1)
+                input_board[plane_idx, square // 8, square % 8] = 1
+            # P2 pieces (6 planes)
+            for square in board.pieces(piece_type, p2_color):
+                plane_idx = i * 14 + 6 + (piece_type - 1)
+                input_board[plane_idx, square // 8, square % 8] = 1
 
-    # Color
-    if board.turn == chess.WHITE:
-        input_board[14, :, :] = 1
-    else:
-        input_board[14, :, :] = 0
+        # Repetition planes (2 planes per history step)
+        if board.is_repetition(2):
+             input_board[i * 14 + 12, :, :] = 1
+        if board.is_repetition(3):
+             input_board[i * 14 + 13, :, :] = 1
 
-    # Total move count
-    input_board[15, :, :] = board.fullmove_number
+    # --- Constant Planes (7 planes for the current board) ---
+    current_board = board_history[-1]
+    p1_color = current_board.turn
 
-    # Castling rights
-    if board.has_kingside_castling_rights(chess.WHITE):
-        input_board[16, 0, 0] = 1
-    if board.has_queenside_castling_rights(chess.WHITE):
-        input_board[16, 0, 1] = 1
-    if board.has_kingside_castling_rights(chess.BLACK):
-        input_board[17, 0, 0] = 1
-    if board.has_queenside_castling_rights(chess.BLACK):
-        input_board[17, 0, 1] = 1
+    # Colour plane (plane 112)
+    input_board[112, :, :] = 1 if p1_color == chess.WHITE else 0
+
+    # Total move count plane (plane 113)
+    input_board[113, :, :] = current_board.fullmove_number
+
+    # P1 castling rights (planes 114, 115)
+    if current_board.has_kingside_castling_rights(p1_color):
+        input_board[114, :, :] = 1
+    if current_board.has_queenside_castling_rights(p1_color):
+        input_board[115, :, :] = 1
+
+    # P2 castling rights (planes 116, 117)
+    if current_board.has_kingside_castling_rights(not p1_color):
+        input_board[116, :, :] = 1
+    if current_board.has_queenside_castling_rights(not p1_color):
+        input_board[117, :, :] = 1
+
+    # No-progress count plane (plane 118)
+    input_board[118, :, :] = current_board.halfmove_clock
 
     return input_board
 
@@ -80,9 +95,8 @@ class AlphaZeroNet(nn.Module):
         self.residual_blocks = nn.ModuleList([ResidualBlock(NUM_FILTERS, NUM_FILTERS) for _ in range(NUM_RESIDUAL_BLOCKS)])
 
         # Policy head
-        self.conv_policy = nn.Conv2d(NUM_FILTERS, 2, kernel_size=1, stride=1, bias=False)
-        self.bn_policy = nn.BatchNorm2d(2)
-        self.fc_policy = nn.Linear(2 * 8 * 8, len(ALL_POSSIBLE_MOVES))
+        self.conv_policy = nn.Conv2d(NUM_FILTERS, NUM_MOVE_PLANES, kernel_size=1, stride=1, bias=False)
+        self.bn_policy = nn.BatchNorm2d(NUM_MOVE_PLANES)
 
         # Value head
         self.conv_value = nn.Conv2d(NUM_FILTERS, 1, kernel_size=1, stride=1, bias=False)
@@ -101,10 +115,6 @@ class AlphaZeroNet(nn.Module):
         # Policy head
         policy = self.conv_policy(x)
         policy = self.bn_policy(policy)
-        policy = self.relu(policy)
-        policy = policy.view(policy.size(0), -1)
-        policy = self.fc_policy(policy)
-        policy = F.log_softmax(policy, dim=1)
 
         # Value head
         value = self.conv_value(x)
@@ -118,12 +128,10 @@ class AlphaZeroNet(nn.Module):
 
         return policy, value
 
-    def predict(self, board):
+    def predict(self, board_history: List[chess.Board]):
         self.eval()
         with torch.no_grad():
-            input_board = torch.FloatTensor(board_to_input(board)).unsqueeze(0)
-            log_ps, v = self(input_board)
+            input_board = torch.FloatTensor(board_to_input(board_history)).unsqueeze(0)
+            p, v = self(input_board)
 
-            ps = torch.exp(log_ps)
-
-            return ps.numpy()[0], v.numpy()[0][0]
+            return p.numpy()[0], v.numpy()[0][0]
