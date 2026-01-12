@@ -15,3 +15,8 @@ The Intuition (MCTS): A search algorithm that explores future possibilities, gui
 The Grind (Self-Play): The system plays thousands of games against itself, generating its own training data to refine the network.
 
 Continuous Evolution: The trained model is stored in the repository, making training fully resumable. You can stop the process and pick it up later—the model's accuracy and playing strength will continue to improve as you invest more time in training.
+
+AlphaZero:
+- deep neural networks
+- a general-purpose reinforcement learning algorithm
+- a general-purpose tree search algorithm
