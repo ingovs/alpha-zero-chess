@@ -1,12 +1,14 @@
+from typing import List
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 import chess
-from typing import List
 
 from alpha_zero_chess.config import INPUT_SHAPE, NUM_RESIDUAL_BLOCKS, NUM_FILTERS
 from alpha_zero_chess.move_encoder import NUM_MOVE_PLANES
+
 
 def board_to_input(board_history: List[chess.Board]):
     """
@@ -65,6 +67,7 @@ def board_to_input(board_history: List[chess.Board]):
 
     return input_board
 
+
 class ResidualBlock(nn.Module):
     def __init__(self, in_channels, out_channels, stride=1):
         super(ResidualBlock, self).__init__()
@@ -84,6 +87,7 @@ class ResidualBlock(nn.Module):
         out += residual
         out = self.relu(out)
         return out
+
 
 class AlphaZeroNet(nn.Module):
     def __init__(self):
@@ -129,9 +133,26 @@ class AlphaZeroNet(nn.Module):
         return policy, value
 
     def predict(self, board_history: List[chess.Board]):
+        """
+        When you call self(input_board), Python invokes the __call__ method inherited from nn.Module.
+
+        PyTorch's nn.Module.__call__ method internally calls your forward method, plus handles
+        additional functionality like:
+        - Running registered hooks (pre-forward and post-forward)
+        - Ensuring proper module state
+
+        So self(input_board) is equivalent to self.forward(input_board), but using self() is the
+        recommended pattern in PyTorch because it ensures all hooks and internal bookkeeping are executed properly.
+        """
+        # Set the model to evaluation mode (self.eval())
         self.eval()
+
+        # Disable gradient calculation for inference (torch.no_grad()) of next move probabilities and game output value
         with torch.no_grad():
             input_board = torch.FloatTensor(board_to_input(board_history)).unsqueeze(0)
+
+            # policy tensor and value tensor prediction by the NN
             p, v = self(input_board)
 
+            # converts the outputs to numpy arrays
             return p.numpy()[0], v.numpy()[0][0]

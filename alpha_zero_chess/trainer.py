@@ -1,9 +1,12 @@
+import os
+
 import torch
 import torch.optim as optim
 from torch.utils.data import DataLoader, TensorDataset
 
 from alpha_zero_chess.model import AlphaZeroNet, board_to_input
 from alpha_zero_chess.config import BATCH_SIZE, EPOCHS, LEARNING_RATE
+
 
 class Trainer:
     def __init__(self):
@@ -43,4 +46,7 @@ class Trainer:
         torch.save(self.model.state_dict(), path)
 
     def load_model(self, path="alpha_zero_chess.pth"):
-        self.model.load_state_dict(torch.load(path))
+        if os.path.exists(path):
+            self.model.load_state_dict(torch.load(path, weights_only=True))
+            return True
+        return False

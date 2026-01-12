@@ -27,6 +27,7 @@ KNIGHT_MOVES = [
 ACTION_TO_MOVE_MAP = {}
 MOVE_TO_ACTION_MAP = {}
 
+
 def _initialize_move_maps():
     plane_idx = 0
 
@@ -47,7 +48,9 @@ def _initialize_move_maps():
             ACTION_TO_MOVE_MAP[plane_idx] = {'type': 'underpromotion', 'piece': piece, 'df': df}
             plane_idx += 1
 
+
 _initialize_move_maps()
+
 
 def move_to_action(move: chess.Move):
     """
@@ -76,8 +79,10 @@ def move_to_action(move: chess.Move):
 
     # --- Queen-like moves ---
     dist = max(abs(dr), abs(df))
-    if dr != 0: dr //= dist
-    if df != 0: df //= dist
+    if dr != 0:
+        dr //= dist
+    if df != 0:
+        df //= dist
 
     for idx, action in ACTION_TO_MOVE_MAP.items():
         if action.get('type') == 'queen' and \
@@ -86,6 +91,7 @@ def move_to_action(move: chess.Move):
             return idx, from_sq
 
     return None
+
 
 def action_to_move(board: chess.Board, action_tuple):
     """
