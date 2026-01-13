@@ -98,9 +98,10 @@ class AlphaZeroNet(nn.Module):
 
         self.residual_blocks = nn.ModuleList([ResidualBlock(NUM_FILTERS, NUM_FILTERS) for _ in range(NUM_RESIDUAL_BLOCKS)])
 
-        # Policy head
-        self.conv_policy = nn.Conv2d(NUM_FILTERS, NUM_MOVE_PLANES, kernel_size=1, stride=1, bias=False)
-        self.bn_policy = nn.BatchNorm2d(NUM_MOVE_PLANES)
+        # Policy head: conv 1x1 with 2 filters -> BN -> ReLU -> FC to 73*8*8
+        self.conv_policy = nn.Conv2d(NUM_FILTERS, 2, kernel_size=1, stride=1, bias=False)
+        self.bn_policy = nn.BatchNorm2d(2)
+        self.fc_policy = nn.Linear(2 * 8 * 8, NUM_MOVE_PLANES * 8 * 8)
 
         # Value head
         self.conv_value = nn.Conv2d(NUM_FILTERS, 1, kernel_size=1, stride=1, bias=False)
@@ -119,6 +120,10 @@ class AlphaZeroNet(nn.Module):
         # Policy head
         policy = self.conv_policy(x)
         policy = self.bn_policy(policy)
+        policy = self.relu(policy)
+        policy = policy.view(policy.size(0), -1)  # Flatten to (batch, 2*8*8)
+        policy = self.fc_policy(policy)  # (batch, 73*8*8)
+        policy = policy.view(policy.size(0), NUM_MOVE_PLANES, 8, 8)  # Reshape to (batch, 73, 8, 8)
 
         # Value head
         value = self.conv_value(x)
