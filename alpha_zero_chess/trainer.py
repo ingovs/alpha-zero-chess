@@ -11,7 +11,8 @@ from alpha_zero_chess.config import BATCH_SIZE, EPOCHS, LEARNING_RATE
 
 class Trainer:
     def __init__(self):
-        self.model = AlphaZeroNet()
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.model = AlphaZeroNet().to(self.device)
         self.optimizer = optim.Adam(self.model.parameters(), lr=LEARNING_RATE, weight_decay=1e-4)
         self.value_criterion = torch.nn.MSELoss()
 
@@ -27,6 +28,10 @@ class Trainer:
 
         for epoch in range(EPOCHS):
             for batch_states, batch_policies, batch_values in dataloader:
+                batch_states = batch_states.to(self.device)
+                batch_policies = batch_policies.to(self.device)
+                batch_values = batch_values.to(self.device)
+
                 self.optimizer.zero_grad()
 
                 pred_policies, pred_values = self.model(batch_states)
@@ -50,6 +55,6 @@ class Trainer:
 
     def load_model(self, path="alpha_zero_chess.pth"):
         if os.path.exists(path):
-            self.model.load_state_dict(torch.load(path, weights_only=True))
+            self.model.load_state_dict(torch.load(path, weights_only=True, map_location=self.device))
             return True
         return False
