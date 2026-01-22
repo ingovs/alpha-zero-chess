@@ -156,8 +156,12 @@ class AlphaZeroNet(nn.Module):
         with torch.no_grad():
             input_board = torch.FloatTensor(board_to_input(board_history)).unsqueeze(0)
 
+            # Move input to the same device as the model
+            device = next(self.parameters()).device
+            input_board = input_board.to(device)
+
             # policy tensor and value tensor prediction by the NN
             p, v = self(input_board)
 
-            # converts the outputs to numpy arrays
-            return p.numpy()[0], v.numpy()[0][0]
+            # converts the outputs to numpy arrays (move back to CPU for numpy conversion)
+            return p.cpu().numpy()[0], v.cpu().numpy()[0][0]
